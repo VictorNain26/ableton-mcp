@@ -77,3 +77,12 @@ def test_set_track_mute_and_solo(inst):
 def test_master_has_no_mute(inst):
     with pytest.raises(Exception, match="master track has no mute"):
         inst._set_track_flag(0, "mute", True, "master")
+
+
+def test_silent_send_reports_valid_json(inst):
+    """A send at -inf dB must not produce -Infinity, which JSON parsers reject."""
+    import json
+    send = FakeParam(0.0, lambda v: "-inf dB")
+    send.name = "A-Reverb"
+    inst._song.tracks[0].mixer_device.sends = [send]
+    json.loads(json.dumps(inst._get_mixer(0)["sends"][0], allow_nan=False))

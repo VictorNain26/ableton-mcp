@@ -798,6 +798,9 @@ class AbletonMCP(ControlSurface):
             "display": param.str_for_value(param.value),
             "db": self._db_for_value(param, param.value) if in_db else None,
         }
+        # A fader at -inf dB would serialize as -Infinity, which is not JSON.
+        if report["db"] == float("-inf"):
+            report["db"] = None
         return report
 
     def _apply_param(self, param, db=None, value=None):
