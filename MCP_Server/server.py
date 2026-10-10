@@ -1759,6 +1759,88 @@ def set_track_solo(
         logger.error(f"Error setting track solo: {str(e)}")
         return f"Error setting track solo: {str(e)}"
 
+# ── Scene tools ───────────────────────────────────────────────────────────────
+
+@mcp.tool()
+@rich_telemetry_tool("create_scene")
+@trajectory_tool("create_scene")
+def create_scene(ctx: Context, index: int = -1, name: str = "", user_prompt: str = "") -> str:
+    """
+    Create a scene in the Session view.
+
+    Parameters:
+    - index: Where to insert the scene; -1 (default) appends it after the last one
+    - name: Optional scene name, e.g. "Chorus"
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("create_scene", {"index": index, "name": name})
+        return (f"Created scene {result.get('index')} '{result.get('name')}' "
+                f"({result.get('scene_count')} scenes)")
+    except Exception as e:
+        logger.error(f"Error creating scene: {str(e)}")
+        return f"Error creating scene: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("set_scene_name")
+@trajectory_tool("set_scene_name")
+def set_scene_name(ctx: Context, scene_index: int, name: str, user_prompt: str = "") -> str:
+    """
+    Rename a scene.
+
+    Parameters:
+    - scene_index: The index of the scene
+    - name: The new name
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_scene_name", {"scene_index": scene_index, "name": name})
+        return f"Renamed scene {scene_index} to '{result.get('name')}'"
+    except Exception as e:
+        logger.error(f"Error renaming scene: {str(e)}")
+        return f"Error renaming scene: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("fire_scene")
+@trajectory_tool("fire_scene")
+def fire_scene(ctx: Context, scene_index: int, user_prompt: str = "") -> str:
+    """
+    Launch every clip in a scene.
+
+    Parameters:
+    - scene_index: The index of the scene
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("fire_scene", {"scene_index": scene_index})
+        return f"Fired scene {scene_index} '{result.get('name')}'"
+    except Exception as e:
+        logger.error(f"Error firing scene: {str(e)}")
+        return f"Error firing scene: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("delete_scene")
+@trajectory_tool("delete_scene")
+def delete_scene(ctx: Context, scene_index: int, user_prompt: str = "") -> str:
+    """
+    Delete a scene and every clip in it.
+
+    Parameters:
+    - scene_index: The index of the scene
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("delete_scene", {"scene_index": scene_index})
+        return (f"Deleted scene {scene_index} '{result.get('name')}' "
+                f"({result.get('scene_count')} scenes left)")
+    except Exception as e:
+        logger.error(f"Error deleting scene: {str(e)}")
+        return f"Error deleting scene: {str(e)}"
+
 # Main execution
 def main():
     """Run the MCP server"""
