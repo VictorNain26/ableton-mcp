@@ -2005,12 +2005,13 @@ def set_clip_groove(
     ctx: Context, track_index: int, clip_index: int, groove_index: int, user_prompt: str = ""
 ) -> str:
     """
-    Apply a Groove Pool groove to a Session clip, or remove it.
+    Apply a Groove Pool groove to a Session clip. Removing a groove is manual:
+    Clip View -> Groove -> None.
 
     Parameters:
     - track_index: The track that owns the clip
     - clip_index: The clip slot
-    - groove_index: Index from get_groove_pool, or -1 to remove the clip's groove
+    - groove_index: Index from get_groove_pool
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:

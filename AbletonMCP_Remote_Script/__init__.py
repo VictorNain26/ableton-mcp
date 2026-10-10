@@ -1061,16 +1061,19 @@ class AbletonMCP(ControlSurface):
         }
 
     def _set_clip_groove(self, track_index, clip_index, groove_index):
-        """Assign a groove from the pool to a clip; -1 removes the clip's groove."""
+        """Assign a groove from the pool to a clip.
+
+        Live 11 rejects None for Clip.groove, so removing a groove stays manual.
+        """
         track = self._resolve_track(track_index)
         if clip_index < 0 or clip_index >= len(track.clip_slots):
             raise IndexError("Clip index %s out of range" % clip_index)
         slot = track.clip_slots[clip_index]
         if not slot.has_clip:
             raise Exception("No clip in slot %s" % clip_index)
-        groove = None if groove_index == -1 else self._resolve_groove(groove_index)
+        groove = self._resolve_groove(groove_index)
         slot.clip.groove = groove
-        return {"clip": slot.clip.name, "groove": groove.name if groove else None}
+        return {"clip": slot.clip.name, "groove": groove.name}
 
     def _set_groove_params(self, groove_index, amounts):
         """Set a groove's timing, random, velocity and quantization amounts."""
