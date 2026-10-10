@@ -1978,6 +1978,98 @@ def get_clip_automation(
         logger.error(f"Error reading clip automation: {str(e)}")
         return f"Error reading clip automation: {str(e)}"
 
+# ── Groove tools ──────────────────────────────────────────────────────────────
+
+@mcp.tool()
+@telemetry_tool("get_groove_pool")
+def get_groove_pool(ctx: Context, user_prompt: str = "") -> str:
+    """
+    List the grooves in the set's Groove Pool with their amounts, and the
+    global groove amount. Grooves enter the pool when the user drags one from
+    the browser's Grooves folder onto a clip or into the pool.
+
+    Parameters:
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        return json.dumps(ableton.send_command("get_groove_pool"), indent=2)
+    except Exception as e:
+        logger.error(f"Error reading groove pool: {str(e)}")
+        return f"Error reading groove pool: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("set_clip_groove")
+@trajectory_tool("set_clip_groove")
+def set_clip_groove(
+    ctx: Context, track_index: int, clip_index: int, groove_index: int, user_prompt: str = ""
+) -> str:
+    """
+    Apply a Groove Pool groove to a Session clip, or remove it.
+
+    Parameters:
+    - track_index: The track that owns the clip
+    - clip_index: The clip slot
+    - groove_index: Index from get_groove_pool, or -1 to remove the clip's groove
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_groove", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "groove_index": groove_index,
+        })
+        return f"Clip '{result.get('clip')}' groove is {result.get('groove')}"
+    except Exception as e:
+        logger.error(f"Error setting clip groove: {str(e)}")
+        return f"Error setting clip groove: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("set_groove_params")
+@trajectory_tool("set_groove_params")
+def set_groove_params(
+    ctx: Context,
+    groove_index: int,
+    timing_amount: Optional[float] = None,
+    random_amount: Optional[float] = None,
+    velocity_amount: Optional[float] = None,
+    quantization_amount: Optional[float] = None,
+    user_prompt: str = ""
+) -> str:
+    """
+    Adjust a Groove Pool groove. Amounts use the ranges Live shows in the pool;
+    read the current values with get_groove_pool first.
+
+    Parameters:
+    - groove_index: Index from get_groove_pool
+    - timing_amount: How strongly the groove moves note timing
+    - random_amount: Random timing variation
+    - velocity_amount: How strongly the groove changes velocities
+    - quantization_amount: How much notes are quantized before the groove applies
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    amounts = {
+        name: value for name, value in (
+            ("timing_amount", timing_amount),
+            ("random_amount", random_amount),
+            ("velocity_amount", velocity_amount),
+            ("quantization_amount", quantization_amount),
+        ) if value is not None
+    }
+    if not amounts:
+        return "Error: provide at least one amount"
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_groove_params", {
+            "groove_index": groove_index,
+            "amounts": amounts,
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error setting groove params: {str(e)}")
+        return f"Error setting groove params: {str(e)}"
+
 # Main execution
 def main():
     """Run the MCP server"""

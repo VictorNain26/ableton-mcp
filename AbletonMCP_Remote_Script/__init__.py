@@ -34,7 +34,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.10.0"
+SCRIPT_VERSION = "1.11.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -70,6 +70,9 @@ SCRIPT_CAPABILITIES = [
     "set_clip_automation",
     "clear_clip_automation",
     "get_clip_automation",
+    "get_groove_pool",
+    "set_clip_groove",
+    "set_groove_params",
 ]
 
 def create_instance(c_instance):
@@ -304,6 +307,8 @@ class AbletonMCP(ControlSurface):
                 response["result"] = self._get_clip_automation(
                     params.get("track_index", 0), params.get("clip_index", 0),
                     params.get("target", {}), params.get("resolution", 0.25))
+            elif command_type == "get_groove_pool":
+                response["result"] = self._get_groove_pool()
             elif command_type == "get_mixer":
                 response["result"] = self._get_mixer(
                     params.get("track_index", 0), params.get("track_type", "track"))
@@ -328,7 +333,9 @@ class AbletonMCP(ControlSurface):
                                  "create_scene", "set_scene_name", "fire_scene",
                                  "delete_scene",
                                  # Clip automation – must run on the main thread
-                                 "set_clip_automation", "clear_clip_automation"]:
+                                 "set_clip_automation", "clear_clip_automation",
+                                 # Groove pool – must run on the main thread
+                                 "set_clip_groove", "set_groove_params"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -471,6 +478,14 @@ class AbletonMCP(ControlSurface):
                             result = self._clear_clip_automation(
                                 params.get("track_index", 0), params.get("clip_index", 0),
                                 params.get("target", {}))
+                        # ── Groove commands ────────────────────────────────────────
+                        elif command_type == "set_clip_groove":
+                            result = self._set_clip_groove(
+                                params.get("track_index", 0), params.get("clip_index", 0),
+                                params.get("groove_index", -1))
+                        elif command_type == "set_groove_params":
+                            result = self._set_groove_params(
+                                params.get("groove_index", 0), params.get("amounts", {}))
                         elif command_type == "set_send":
                             result = self._set_send(
                                 params.get("track_index", 0),
@@ -1018,6 +1033,53 @@ class AbletonMCP(ControlSurface):
             samples.append({"time": t, "value": value, "display": param.str_for_value(value)})
             t += resolution
         return {"parameter": param.name, "has_envelope": True, "samples": samples}
+
+    # ------------------------------------------------------------------
+    # Groove pool
+    # ------------------------------------------------------------------
+
+    GROOVE_AMOUNTS = ("timing_amount", "random_amount", "velocity_amount", "quantization_amount")
+
+    def _serialize_groove(self, index, groove):
+        entry = {"index": index, "name": groove.name}
+        for attr in self.GROOVE_AMOUNTS:
+            entry[attr] = getattr(groove, attr)
+        return entry
+
+    def _resolve_groove(self, groove_index):
+        grooves = self._song.groove_pool.grooves
+        if groove_index < 0 or groove_index >= len(grooves):
+            raise IndexError("Groove index %s out of range (pool has %d grooves)"
+                             % (groove_index, len(grooves)))
+        return grooves[groove_index]
+
+    def _get_groove_pool(self):
+        grooves = self._song.groove_pool.grooves
+        return {
+            "global_amount": self._song.groove_amount,
+            "grooves": [self._serialize_groove(i, g) for i, g in enumerate(grooves)],
+        }
+
+    def _set_clip_groove(self, track_index, clip_index, groove_index):
+        """Assign a groove from the pool to a clip; -1 removes the clip's groove."""
+        track = self._resolve_track(track_index)
+        if clip_index < 0 or clip_index >= len(track.clip_slots):
+            raise IndexError("Clip index %s out of range" % clip_index)
+        slot = track.clip_slots[clip_index]
+        if not slot.has_clip:
+            raise Exception("No clip in slot %s" % clip_index)
+        groove = None if groove_index == -1 else self._resolve_groove(groove_index)
+        slot.clip.groove = groove
+        return {"clip": slot.clip.name, "groove": groove.name if groove else None}
+
+    def _set_groove_params(self, groove_index, amounts):
+        """Set a groove's timing, random, velocity and quantization amounts."""
+        groove = self._resolve_groove(groove_index)
+        for attr, value in amounts.items():
+            if attr not in self.GROOVE_AMOUNTS:
+                raise Exception("Unknown groove amount '%s'" % attr)
+            setattr(groove, attr, float(value))
+        return self._serialize_groove(groove_index, groove)
 
     def _set_track_flag(self, track_index, flag, enabled, track_type="track"):
         """Set a track's mute or solo button. The master track has neither."""
