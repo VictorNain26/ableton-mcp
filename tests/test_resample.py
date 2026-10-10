@@ -18,6 +18,8 @@ class FakeRouting(object):
 
 
 class FakeClip(object):
+    name = "Resample 0001"
+    is_audio_clip = True
     is_recording = False
     file_path = "C:\\Users\\me\\Music\\Set Project\\Samples\\Recorded\\0001 Audio.wav"
     length = 8.0
@@ -127,3 +129,13 @@ def test_to_analysis_wav_converts_24_bit(tmp_path):
         assert audio.analyze(out)["silent"] is False
     finally:
         os.remove(out)
+
+
+def test_get_clip_file_reports_path(inst):
+    inst._song.tracks[1].clip_slots[1] = FakeSlot(True)
+    assert inst._get_clip_file(1, 1)["file_path"].endswith("0001 Audio.wav")
+
+
+def test_get_clip_file_rejects_empty_slot(inst):
+    with pytest.raises(Exception, match="No audio clip in slot 0 on 'Resample'"):
+        inst._get_clip_file(1, 0)

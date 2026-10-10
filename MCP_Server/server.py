@@ -2105,7 +2105,7 @@ async def record_audio(ctx: Context, seconds: float = 4.0, device: str = audio.D
 @telemetry_tool("analyze_audio")
 def analyze_audio(ctx: Context, path: str, user_prompt: str = "") -> str:
     """
-    Analyze a WAV file recorded with record_audio or record_resample.
+    Analyze a WAV file recorded with record_audio.
 
     Returns peak and RMS level (dBFS), crest factor, clipped sample count, stereo
     balance and correlation (1 = mono, near 0 = wide, negative = phase problems),
@@ -2114,8 +2114,7 @@ def analyze_audio(ctx: Context, path: str, user_prompt: str = "") -> str:
     or harsh mix.
 
     Parameters:
-    - path: The WAV path returned by record_audio, or the analysis copy returned by
-      record_resample (only files in the temp directory
+    - path: The WAV path returned by record_audio (only files in the temp directory
       are read, up to 120 seconds long)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
@@ -2136,14 +2135,16 @@ async def record_resample(
     user_prompt: str = ""
 ) -> str:
     """
-    Record what Live's master plays into an audio clip, inside Live, and return
-    a copy ready for analyze_audio. Works on any OS and needs no loopback
-    device: the audio track's input is set to Resampling.
+    Record what Live's master plays into an audio clip, inside Live. Works on
+    any OS and needs no loopback device: the audio track's input is set to
+    Resampling.
 
     The track must be an audio track (create_audio_track) and the slot empty.
     Its monitoring is turned off to avoid feedback and it is disarmed when the
     recording lands. Recording starts at the next launch quantization boundary
     and lasts `beats` beats (a 4/4 bar is 4 beats); the call returns once done.
+    Live keeps the new file locked until the set is saved: ask the user to save
+    (Ctrl+S), then call analyze_clip_audio on the same slot.
 
     Parameters:
     - track_index: The audio track to record into
@@ -2174,13 +2175,43 @@ async def record_resample(
             if time.monotonic() > deadline:
                 return "Error recording resample: the recording did not finish in time"
             await asyncio.sleep(0.5)
-        live_path = status.get("file_path") or ""
-        wav = await asyncio.to_thread(audio.to_analysis_wav, audio.local_path(live_path))
-        return (f"Recorded {beats:g} beats into '{start.get('track')}' slot {clip_index} "
-                f"({live_path}). Analysis copy: {wav}")
+        return (f"Recorded {beats:g} beats into '{start.get('track')}' slot {clip_index}. "
+                "Ask the user to save the set, then call analyze_clip_audio on this slot.")
     except Exception as e:
         logger.error(f"Error recording resample: {str(e)}")
         return f"Error recording resample: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("analyze_clip_audio")
+def analyze_clip_audio(ctx: Context, track_index: int, clip_index: int, user_prompt: str = "") -> str:
+    """
+    Analyze the audio file behind a Session audio clip, such as one recorded
+    with record_resample. Returns the same measures as analyze_audio.
+
+    Live locks a fresh recording until the set is saved; if the file cannot be
+    read, ask the user to save (Ctrl+S) and call this again.
+
+    Parameters:
+    - track_index: The audio track
+    - clip_index: The slot holding the audio clip
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        clip = ableton.send_command("get_clip_file", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+        })
+        wav = audio.to_analysis_wav(audio.local_path(clip.get("file_path") or ""))
+        try:
+            result = audio.analyze(wav)
+        finally:
+            os.remove(wav)
+        result["clip"] = clip.get("name")
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error analyzing clip audio: {str(e)}")
+        return f"Error analyzing clip audio: {str(e)}"
 
 
 # Main execution
