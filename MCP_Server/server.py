@@ -1,6 +1,7 @@
 # ableton_mcp_server.py
 from mcp.server.fastmcp import FastMCP, Context
 import asyncio
+import time
 import socket
 import json
 import logging
@@ -2104,7 +2105,7 @@ async def record_audio(ctx: Context, seconds: float = 4.0, device: str = audio.D
 @telemetry_tool("analyze_audio")
 def analyze_audio(ctx: Context, path: str, user_prompt: str = "") -> str:
     """
-    Analyze a WAV file recorded with record_audio.
+    Analyze a WAV file recorded with record_audio or record_resample.
 
     Returns peak and RMS level (dBFS), crest factor, clipped sample count, stereo
     balance and correlation (1 = mono, near 0 = wide, negative = phase problems),
@@ -2113,7 +2114,8 @@ def analyze_audio(ctx: Context, path: str, user_prompt: str = "") -> str:
     or harsh mix.
 
     Parameters:
-    - path: The WAV path returned by record_audio (only files in the temp directory
+    - path: The WAV path returned by record_audio, or the analysis copy returned by
+      record_resample (only files in the temp directory
       are read, up to 120 seconds long)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
@@ -2122,6 +2124,63 @@ def analyze_audio(ctx: Context, path: str, user_prompt: str = "") -> str:
     except Exception as e:
         logger.error(f"Error analyzing audio: {str(e)}")
         return f"Error analyzing audio: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("record_resample")
+async def record_resample(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    beats: float = 8.0,
+    scene_index: int = -1,
+    user_prompt: str = ""
+) -> str:
+    """
+    Record what Live's master plays into an audio clip, inside Live, and return
+    a copy ready for analyze_audio. Works on any OS and needs no loopback
+    device: the audio track's input is set to Resampling.
+
+    The track must be an audio track (create_audio_track) and the slot empty.
+    Its monitoring is turned off to avoid feedback and it is disarmed when the
+    recording lands. Recording starts at the next launch quantization boundary
+    and lasts `beats` beats (a 4/4 bar is 4 beats); the call returns once done.
+
+    Parameters:
+    - track_index: The audio track to record into
+    - clip_index: An empty slot on that track
+    - beats: Recording length in beats (default 8, two 4/4 bars)
+    - scene_index: Optionally launch this row's clips on the other tracks as recording starts
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        start = await asyncio.to_thread(ableton.send_command, "start_resample", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "beats": beats,
+            "scene_index": scene_index,
+        })
+        seconds_per_beat = 60.0 / float(start.get("tempo") or 120.0)
+        # Up to one bar of launch quantization, the recording, then slack.
+        deadline = time.monotonic() + (beats + 4) * seconds_per_beat + 15
+        await asyncio.sleep(beats * seconds_per_beat)
+        while True:
+            status = await asyncio.to_thread(ableton.send_command, "finish_resample", {
+                "track_index": track_index,
+                "clip_index": clip_index,
+            })
+            if status.get("done"):
+                break
+            if time.monotonic() > deadline:
+                return "Error recording resample: the recording did not finish in time"
+            await asyncio.sleep(0.5)
+        live_path = status.get("file_path") or ""
+        wav = await asyncio.to_thread(audio.to_analysis_wav, audio.local_path(live_path))
+        return (f"Recorded {beats:g} beats into '{start.get('track')}' slot {clip_index} "
+                f"({live_path}). Analysis copy: {wav}")
+    except Exception as e:
+        logger.error(f"Error recording resample: {str(e)}")
+        return f"Error recording resample: {str(e)}"
 
 
 # Main execution
