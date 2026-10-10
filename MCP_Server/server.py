@@ -2213,6 +2213,28 @@ def analyze_clip_audio(ctx: Context, track_index: int, clip_index: int, user_pro
         logger.error(f"Error analyzing clip audio: {str(e)}")
         return f"Error analyzing clip audio: {str(e)}"
 
+@mcp.tool()
+@telemetry_tool("get_drum_pads")
+def get_drum_pads(ctx: Context, track_index: int, device_index: int = 0, user_prompt: str = "") -> str:
+    """
+    List the MIDI note and name of every pad holding a sound in a Drum Rack.
+    Read it before writing drum notes: kits do not share one layout.
+
+    Parameters:
+    - track_index: The track holding the Drum Rack
+    - device_index: The Drum Rack's position in the track's device chain (default 0)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        return json.dumps(ableton.send_command("get_drum_pads", {
+            "track_index": track_index,
+            "device_index": device_index,
+        }), indent=2)
+    except Exception as e:
+        logger.error(f"Error reading drum pads: {str(e)}")
+        return f"Error reading drum pads: {str(e)}"
+
 
 # Main execution
 def main():
