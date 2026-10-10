@@ -75,6 +75,7 @@ SCRIPT_CAPABILITIES = [
     "set_groove_params",
     "start_resample",
     "finish_resample",
+    "get_clip_file",
 ]
 
 def create_instance(c_instance):
@@ -309,6 +310,9 @@ class AbletonMCP(ControlSurface):
                 response["result"] = self._get_clip_automation(
                     params.get("track_index", 0), params.get("clip_index", 0),
                     params.get("target", {}), params.get("resolution", 0.25))
+            elif command_type == "get_clip_file":
+                response["result"] = self._get_clip_file(
+                    params.get("track_index", 0), params.get("clip_index", 0))
             elif command_type == "get_groove_pool":
                 response["result"] = self._get_groove_pool()
             elif command_type == "get_mixer":
@@ -1146,6 +1150,14 @@ class AbletonMCP(ControlSurface):
             return {"done": False}
         track.arm = False
         return {"done": True, "file_path": slot.clip.file_path, "length": slot.clip.length}
+
+    def _get_clip_file(self, track_index, clip_index):
+        """The audio file behind a Session audio clip."""
+        track = self._resolve_track(track_index)
+        slot = track.clip_slots[clip_index]
+        if not slot.has_clip or not slot.clip.is_audio_clip:
+            raise Exception("No audio clip in slot %s on '%s'" % (clip_index, track.name))
+        return {"name": slot.clip.name, "file_path": slot.clip.file_path}
 
     def _set_track_flag(self, track_index, flag, enabled, track_type="track"):
         """Set a track's mute or solo button. The master track has neither."""
