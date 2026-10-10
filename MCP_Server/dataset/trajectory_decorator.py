@@ -43,6 +43,10 @@ MODIFYING_TOOLS = {
     "set_send",
     "set_track_mute",
     "set_track_solo",
+    "create_scene",
+    "set_scene_name",
+    "fire_scene",
+    "delete_scene",
 }
 
 _PARAM_KEYS = (

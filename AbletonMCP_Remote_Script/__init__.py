@@ -34,7 +34,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.8.0"
+SCRIPT_VERSION = "1.9.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -63,6 +63,10 @@ SCRIPT_CAPABILITIES = [
     "set_send",
     "set_track_mute",
     "set_track_solo",
+    "create_scene",
+    "set_scene_name",
+    "fire_scene",
+    "delete_scene",
 ]
 
 def create_instance(c_instance):
@@ -312,7 +316,10 @@ class AbletonMCP(ControlSurface):
                                  "create_locator",
                                  # Mixer – must run on the main thread
                                  "set_track_volume", "set_track_panning", "set_send",
-                                 "set_track_mute", "set_track_solo"]:
+                                 "set_track_mute", "set_track_solo",
+                                 # Scenes – must run on the main thread
+                                 "create_scene", "set_scene_name", "fire_scene",
+                                 "delete_scene"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -434,6 +441,17 @@ class AbletonMCP(ControlSurface):
                                 params.get("track_index", 0), "solo",
                                 params.get("solo", True),
                                 params.get("track_type", "track"))
+                        # ── Scene commands ─────────────────────────────────────────
+                        elif command_type == "create_scene":
+                            result = self._create_scene(
+                                params.get("index", -1), params.get("name", ""))
+                        elif command_type == "set_scene_name":
+                            result = self._set_scene_name(
+                                params.get("scene_index", 0), params.get("name", ""))
+                        elif command_type == "fire_scene":
+                            result = self._fire_scene(params.get("scene_index", 0))
+                        elif command_type == "delete_scene":
+                            result = self._delete_scene(params.get("scene_index", 0))
                         elif command_type == "set_send":
                             result = self._set_send(
                                 params.get("track_index", 0),
@@ -597,6 +615,7 @@ class AbletonMCP(ControlSurface):
                 "loop":              self._safe_song_property("loop",              bool,  False),
                 "loop_start":        self._safe_song_property("loop_start",        float, 0.0),
                 "loop_length":       self._safe_song_property("loop_length",       float, 0.0),
+                "scenes": self._serialize_scenes(),
             }
             return result
         except Exception as e:
@@ -862,6 +881,42 @@ class AbletonMCP(ControlSurface):
         except Exception as e:
             self.log_message("Error setting track panning: " + str(e))
             raise
+
+    # ------------------------------------------------------------------
+    # Scenes
+    # ------------------------------------------------------------------
+
+    def _resolve_scene(self, scene_index):
+        scenes = self._song.scenes
+        if scene_index < 0 or scene_index >= len(scenes):
+            raise IndexError("Scene index %s out of range (have %d)" % (scene_index, len(scenes)))
+        return scenes[scene_index]
+
+    def _create_scene(self, index=-1, name=""):
+        """Insert a scene; -1 appends it after the last one."""
+        self._song.create_scene(index)
+        scenes = self._song.scenes
+        new_index = len(scenes) - 1 if index == -1 else index
+        scene = scenes[new_index]
+        if name:
+            scene.name = name
+        return {"index": new_index, "name": scene.name, "scene_count": len(scenes)}
+
+    def _set_scene_name(self, scene_index, name):
+        scene = self._resolve_scene(scene_index)
+        scene.name = name
+        return {"index": scene_index, "name": scene.name}
+
+    def _fire_scene(self, scene_index):
+        scene = self._resolve_scene(scene_index)
+        scene.fire()
+        return {"index": scene_index, "name": scene.name, "fired": True}
+
+    def _delete_scene(self, scene_index):
+        scene = self._resolve_scene(scene_index)
+        name = scene.name
+        self._song.delete_scene(scene_index)
+        return {"deleted": scene_index, "name": name, "scene_count": len(self._song.scenes)}
 
     def _set_track_flag(self, track_index, flag, enabled, track_type="track"):
         """Set a track's mute or solo button. The master track has neither."""
