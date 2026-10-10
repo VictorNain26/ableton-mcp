@@ -34,7 +34,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.7.1"
+SCRIPT_VERSION = "1.8.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -57,6 +57,12 @@ SCRIPT_CAPABILITIES = [
     "create_locator",
     "delete_clip",
     "clear_notes_from_clip",
+    "get_mixer",
+    "set_track_volume",
+    "set_track_panning",
+    "set_send",
+    "set_track_mute",
+    "set_track_solo",
 ]
 
 def create_instance(c_instance):
@@ -305,7 +311,8 @@ class AbletonMCP(ControlSurface):
                                  "map_rack_magnitude", "inspect_rack",
                                  "create_locator",
                                  # Mixer – must run on the main thread
-                                 "set_track_volume", "set_track_panning", "set_send"]:
+                                 "set_track_volume", "set_track_panning", "set_send",
+                                 "set_track_mute", "set_track_solo"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -416,6 +423,16 @@ class AbletonMCP(ControlSurface):
                             result = self._set_track_panning(
                                 params.get("track_index", 0),
                                 params.get("value", 0.0),
+                                params.get("track_type", "track"))
+                        elif command_type == "set_track_mute":
+                            result = self._set_track_flag(
+                                params.get("track_index", 0), "mute",
+                                params.get("mute", True),
+                                params.get("track_type", "track"))
+                        elif command_type == "set_track_solo":
+                            result = self._set_track_flag(
+                                params.get("track_index", 0), "solo",
+                                params.get("solo", True),
                                 params.get("track_type", "track"))
                         elif command_type == "set_send":
                             result = self._set_send(
@@ -770,17 +787,17 @@ class AbletonMCP(ControlSurface):
                 high = mid
         return (low + high) / 2.0
 
-    def _param_report(self, param):
-        """Describe a mixer parameter as raw value, dB and Live's own display."""
+    def _param_report(self, param, in_db=True):
+        """Describe a mixer parameter as raw value, dB and Live's own display.
+
+        Panning displays as "25R"/"50L"; parsing that as dB would keep the
+        digits, so only volume and sends are read as dB.
+        """
         report = {
             "value": param.value,
             "display": param.str_for_value(param.value),
+            "db": self._db_for_value(param, param.value) if in_db else None,
         }
-        try:
-            report["db"] = self._db_for_value(param, param.value)
-        except Exception:
-            # panning and other non-dB parameters simply have no dB reading
-            report["db"] = None
         return report
 
     def _apply_param(self, param, db=None, value=None):
@@ -797,6 +814,7 @@ class AbletonMCP(ControlSurface):
         """Read volume, panning and sends for a mixer target."""
         try:
             track = self._resolve_track(track_index, track_type)
+            is_master = (track_type or "track").lower() == "master"
             mixer = track.mixer_device
             sends = []
             # The master track has no sends.
@@ -809,8 +827,10 @@ class AbletonMCP(ControlSurface):
                 "name": track.name,
                 "track_type": (track_type or "track").lower(),
                 "volume": self._param_report(mixer.volume),
-                "panning": self._param_report(mixer.panning),
+                "panning": self._param_report(mixer.panning, in_db=False),
                 "sends": sends,
+                "mute": None if is_master else track.mute,
+                "solo": None if is_master else track.solo,
             }
         except Exception as e:
             self.log_message("Error getting mixer: " + str(e))
@@ -833,12 +853,20 @@ class AbletonMCP(ControlSurface):
             track = self._resolve_track(track_index, track_type)
             param = track.mixer_device.panning
             param.value = max(param.min, min(param.max, float(value)))
-            result = self._param_report(param)
+            result = self._param_report(param, in_db=False)
             result["name"] = track.name
             return result
         except Exception as e:
             self.log_message("Error setting track panning: " + str(e))
             raise
+
+    def _set_track_flag(self, track_index, flag, enabled, track_type="track"):
+        """Set a track's mute or solo button. The master track has neither."""
+        if (track_type or "track").lower() == "master":
+            raise Exception("The master track has no %s button" % flag)
+        track = self._resolve_track(track_index, track_type)
+        setattr(track, flag, bool(enabled))
+        return {"name": track.name, flag: getattr(track, flag)}
 
     def _set_send(self, track_index, send_index, db=None, value=None, track_type="track"):
         """Set one of a track's send levels."""

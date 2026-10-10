@@ -1697,6 +1697,68 @@ def set_send(
         logger.error(f"Error setting send: {str(e)}")
         return f"Error setting send: {str(e)}"
 
+@mcp.tool()
+@rich_telemetry_tool("set_track_mute")
+@trajectory_tool("set_track_mute")
+def set_track_mute(
+    ctx: Context,
+    track_index: int,
+    mute: bool,
+    track_type: str = "track",
+    user_prompt: str = ""
+) -> str:
+    """
+    Mute or unmute a track.
+
+    Parameters:
+    - track_index: The index of the track
+    - mute: True to mute, False to unmute
+    - track_type: "track" (default) or "return"
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_mute", {
+            "track_index": track_index,
+            "mute": mute,
+            "track_type": track_type
+        })
+        return f"Track '{result.get('name')}' mute is {result.get('mute')}"
+    except Exception as e:
+        logger.error(f"Error setting track mute: {str(e)}")
+        return f"Error setting track mute: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("set_track_solo")
+@trajectory_tool("set_track_solo")
+def set_track_solo(
+    ctx: Context,
+    track_index: int,
+    solo: bool,
+    track_type: str = "track",
+    user_prompt: str = ""
+) -> str:
+    """
+    Solo or unsolo a track.
+
+    Parameters:
+    - track_index: The index of the track
+    - solo: True to solo, False to unsolo
+    - track_type: "track" (default) or "return"
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_solo", {
+            "track_index": track_index,
+            "solo": solo,
+            "track_type": track_type
+        })
+        return f"Track '{result.get('name')}' solo is {result.get('solo')}"
+    except Exception as e:
+        logger.error(f"Error setting track solo: {str(e)}")
+        return f"Error setting track solo: {str(e)}"
+
 # Main execution
 def main():
     """Run the MCP server"""
