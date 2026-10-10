@@ -34,7 +34,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.9.0"
+SCRIPT_VERSION = "1.10.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -67,6 +67,9 @@ SCRIPT_CAPABILITIES = [
     "set_scene_name",
     "fire_scene",
     "delete_scene",
+    "set_clip_automation",
+    "clear_clip_automation",
+    "get_clip_automation",
 ]
 
 def create_instance(c_instance):
@@ -297,6 +300,10 @@ class AbletonMCP(ControlSurface):
             elif command_type == "get_track_info":
                 track_index = params.get("track_index", 0)
                 response["result"] = self._get_track_info(track_index)
+            elif command_type == "get_clip_automation":
+                response["result"] = self._get_clip_automation(
+                    params.get("track_index", 0), params.get("clip_index", 0),
+                    params.get("target", {}), params.get("resolution", 0.25))
             elif command_type == "get_mixer":
                 response["result"] = self._get_mixer(
                     params.get("track_index", 0), params.get("track_type", "track"))
@@ -319,7 +326,9 @@ class AbletonMCP(ControlSurface):
                                  "set_track_mute", "set_track_solo",
                                  # Scenes – must run on the main thread
                                  "create_scene", "set_scene_name", "fire_scene",
-                                 "delete_scene"]:
+                                 "delete_scene",
+                                 # Clip automation – must run on the main thread
+                                 "set_clip_automation", "clear_clip_automation"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -452,6 +461,16 @@ class AbletonMCP(ControlSurface):
                             result = self._fire_scene(params.get("scene_index", 0))
                         elif command_type == "delete_scene":
                             result = self._delete_scene(params.get("scene_index", 0))
+                        # ── Clip automation commands ───────────────────────────────
+                        elif command_type == "set_clip_automation":
+                            result = self._set_clip_automation(
+                                params.get("track_index", 0), params.get("clip_index", 0),
+                                params.get("target", {}), params.get("points", []),
+                                params.get("resolution", 0.0625))
+                        elif command_type == "clear_clip_automation":
+                            result = self._clear_clip_automation(
+                                params.get("track_index", 0), params.get("clip_index", 0),
+                                params.get("target", {}))
                         elif command_type == "set_send":
                             result = self._set_send(
                                 params.get("track_index", 0),
@@ -917,6 +936,88 @@ class AbletonMCP(ControlSurface):
         name = scene.name
         self._song.delete_scene(scene_index)
         return {"deleted": scene_index, "name": name, "scene_count": len(self._song.scenes)}
+
+    # ------------------------------------------------------------------
+    # Clip automation
+    # ------------------------------------------------------------------
+
+    def _automation_target(self, track_index, clip_index, target):
+        """Resolve (clip, parameter) for a Session clip and a target dict.
+
+        target["type"] is "volume", "panning", "send" (with send_index) or
+        "device" (with device_index and parameter_index).
+        """
+        track = self._resolve_track(track_index)
+        if clip_index < 0 or clip_index >= len(track.clip_slots):
+            raise IndexError("Clip index %s out of range" % clip_index)
+        slot = track.clip_slots[clip_index]
+        if not slot.has_clip:
+            raise Exception("No clip in slot %s" % clip_index)
+        kind = target.get("type", "device")
+        mixer = track.mixer_device
+        if kind == "volume":
+            param = mixer.volume
+        elif kind == "panning":
+            param = mixer.panning
+        elif kind == "send":
+            param = mixer.sends[target.get("send_index", 0)]
+        elif kind == "device":
+            device = track.devices[target.get("device_index", 0)]
+            param = device.parameters[target.get("parameter_index", 0)]
+        else:
+            raise Exception("Unknown automation target type '%s'" % kind)
+        return slot.clip, param
+
+    def _point_value(self, param, point):
+        """A point gives a raw "value" or, for volume and sends, a "db" level."""
+        if point.get("db") is not None:
+            return self._value_for_db(param, point["db"])
+        return max(param.min, min(param.max, float(point["value"])))
+
+    def _set_clip_automation(self, track_index, clip_index, target, points, resolution=0.0625):
+        """Replace a parameter's envelope in a clip with a breakpoint curve.
+
+        Points are {"time": beats from clip start, "value" or "db"}. Live's
+        clip envelopes take flat steps, so ramps between points are drawn as
+        steps of `resolution` beats.
+        """
+        if len(points) < 1:
+            raise Exception("Provide at least one automation point")
+        clip, param = self._automation_target(track_index, clip_index, target)
+        points = sorted(points, key=lambda p: float(p["time"]))
+        clip.clear_envelope(param)
+        envelope = clip.create_automation_envelope(param)
+        steps = 0
+        for start, end in zip(points, points[1:]):
+            t0, t1 = float(start["time"]), float(end["time"])
+            v0, v1 = self._point_value(param, start), self._point_value(param, end)
+            count = max(1, int(round((t1 - t0) / resolution)))
+            length = (t1 - t0) / count
+            for k in range(count):
+                envelope.insert_step(t0 + k * length, length, v0 + (v1 - v0) * k / float(count))
+                steps += 1
+        last = points[-1]
+        envelope.insert_step(float(last["time"]), resolution, self._point_value(param, last))
+        return {"parameter": param.name, "points": len(points), "steps": steps + 1}
+
+    def _clear_clip_automation(self, track_index, clip_index, target):
+        clip, param = self._automation_target(track_index, clip_index, target)
+        clip.clear_envelope(param)
+        return {"parameter": param.name, "cleared": True}
+
+    def _get_clip_automation(self, track_index, clip_index, target, resolution=0.25):
+        """Sample a parameter's clip envelope every `resolution` beats."""
+        clip, param = self._automation_target(track_index, clip_index, target)
+        envelope = clip.automation_envelope(param)
+        if envelope is None:
+            return {"parameter": param.name, "has_envelope": False, "samples": []}
+        samples = []
+        t = 0.0
+        while t < clip.length:
+            value = envelope.value_at_time(t)
+            samples.append({"time": t, "value": value, "display": param.str_for_value(value)})
+            t += resolution
+        return {"parameter": param.name, "has_envelope": True, "samples": samples}
 
     def _set_track_flag(self, track_index, flag, enabled, track_type="track"):
         """Set a track's mute or solo button. The master track has neither."""

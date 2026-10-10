@@ -47,6 +47,8 @@ MODIFYING_TOOLS = {
     "set_scene_name",
     "fire_scene",
     "delete_scene",
+    "set_clip_automation",
+    "clear_clip_automation",
 }
 
 _PARAM_KEYS = (
