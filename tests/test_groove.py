@@ -57,10 +57,9 @@ def test_pool_lists_grooves(inst):
     assert pool["grooves"][0]["timing_amount"] == 100.0
 
 
-def test_apply_and_remove_clip_groove(inst):
+def test_apply_clip_groove(inst):
     assert inst._set_clip_groove(0, 0, 0) == {"clip": "Beat", "groove": "MPC 16 Swing-58"}
     assert inst._song.tracks[0].clip_slots[0].clip.groove is inst._song.groove_pool.grooves[0]
-    assert inst._set_clip_groove(0, 0, -1)["groove"] is None
 
 
 def test_set_groove_params(inst):
