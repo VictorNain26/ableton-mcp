@@ -520,6 +520,7 @@ def get_device_parameters(
     ctx: Context,
     track_index: int,
     device_index: int,
+    track_type: str = "track",
     user_prompt: str = "",
 ) -> str:
     """
@@ -528,13 +529,15 @@ def get_device_parameters(
     Parameters:
     - track_index: Track that owns the device
     - device_index: Index into the track's device chain
+    - track_type: "track" (default), "return", or "master" (index ignored for master)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:
         ableton = get_ableton_connection()
         result = ableton.send_command(
             "get_device_parameters",
-            {"track_index": track_index, "device_index": device_index},
+            {"track_index": track_index, "device_index": device_index,
+             "track_type": track_type},
         )
         return json.dumps(result, indent=2)
     except Exception as e:
@@ -551,6 +554,7 @@ def set_device_parameter(
     device_index: int,
     parameter_index: int,
     value: float,
+    track_type: str = "track",
     user_prompt: str = "",
 ) -> str:
     """
@@ -563,6 +567,7 @@ def set_device_parameter(
     - device_index: Index into the track's device chain
     - parameter_index: Index into device.parameters
     - value: New parameter value (Live parameter units)
+    - track_type: "track" (default), "return", or "master" (index ignored for master)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:
@@ -574,6 +579,7 @@ def set_device_parameter(
                 "device_index": device_index,
                 "parameter_index": parameter_index,
                 "value": value,
+                "track_type": track_type,
             },
         )
         return (
@@ -892,20 +898,24 @@ def set_tempo(ctx: Context, tempo: float, user_prompt: str = "") -> str:
 @mcp.tool()
 @rich_telemetry_tool("load_instrument_or_effect")
 @trajectory_tool("load_instrument_or_effect")
-def load_instrument_or_effect(ctx: Context, track_index: int, uri: str, user_prompt: str = "") -> str:
+def load_instrument_or_effect(ctx: Context, track_index: int, uri: str, track_type: str = "track",
+                              user_prompt: str = "") -> str:
     """
-    Load an instrument or effect onto a track using its URI.
+    Load an instrument or effect onto a track using its URI. Effects can also go
+    on a return track or the master.
 
     Parameters:
     - track_index: The index of the track to load the instrument on
     - uri: The URI of the instrument or effect to load (e.g., 'query:Synths#Instrument%20Rack:Bass:FileId_5116')
+    - track_type: "track" (default), "return", or "master" (index ignored for master)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:
         ableton = get_ableton_connection()
         result = ableton.send_command("load_browser_item", {
             "track_index": track_index,
-            "item_uri": uri
+            "item_uri": uri,
+            "track_type": track_type
         })
         
         # Check if the instrument was loaded successfully
@@ -2234,6 +2244,26 @@ def get_drum_pads(ctx: Context, track_index: int, device_index: int = 0, user_pr
     except Exception as e:
         logger.error(f"Error reading drum pads: {str(e)}")
         return f"Error reading drum pads: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("delete_track")
+@trajectory_tool("delete_track")
+def delete_track(ctx: Context, track_index: int, user_prompt: str = "") -> str:
+    """
+    Delete a track and everything on it. Track indices after it shift down by one.
+
+    Parameters:
+    - track_index: The index of the track to delete
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("delete_track", {"track_index": track_index})
+        return (f"Deleted track {track_index} '{result.get('name')}' "
+                f"({result.get('track_count')} tracks left)")
+    except Exception as e:
+        logger.error(f"Error deleting track: {str(e)}")
+        return f"Error deleting track: {str(e)}"
 
 
 # Main execution
