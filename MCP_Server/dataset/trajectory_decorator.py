@@ -51,6 +51,7 @@ MODIFYING_TOOLS = {
     "clear_clip_automation",
     "set_clip_groove",
     "set_groove_params",
+    "delete_track",
 }
 
 _PARAM_KEYS = (
