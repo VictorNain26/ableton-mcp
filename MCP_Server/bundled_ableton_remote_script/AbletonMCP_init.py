@@ -34,7 +34,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.12.0"
+SCRIPT_VERSION = "1.13.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -76,6 +76,7 @@ SCRIPT_CAPABILITIES = [
     "start_resample",
     "finish_resample",
     "get_clip_file",
+    "get_drum_pads",
 ]
 
 def create_instance(c_instance):
@@ -310,6 +311,9 @@ class AbletonMCP(ControlSurface):
                 response["result"] = self._get_clip_automation(
                     params.get("track_index", 0), params.get("clip_index", 0),
                     params.get("target", {}), params.get("resolution", 0.25))
+            elif command_type == "get_drum_pads":
+                response["result"] = self._get_drum_pads(
+                    params.get("track_index", 0), params.get("device_index", 0))
             elif command_type == "get_clip_file":
                 response["result"] = self._get_clip_file(
                     params.get("track_index", 0), params.get("clip_index", 0))
@@ -1150,6 +1154,16 @@ class AbletonMCP(ControlSurface):
             return {"done": False}
         track.arm = False
         return {"done": True, "file_path": slot.clip.file_path, "length": slot.clip.length}
+
+    def _get_drum_pads(self, track_index, device_index):
+        """MIDI note and name of every Drum Rack pad that holds a sound."""
+        track = self._resolve_track(track_index)
+        device = track.devices[device_index]
+        if not device.can_have_drum_pads:
+            raise Exception("Device '%s' is not a Drum Rack" % device.name)
+        pads = [{"note": pad.note, "name": pad.name}
+                for pad in device.drum_pads if len(pad.chains) > 0]
+        return {"device": device.name, "pads": pads}
 
     def _get_clip_file(self, track_index, clip_index):
         """The audio file behind a Session audio clip."""
