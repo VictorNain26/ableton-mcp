@@ -1841,6 +1841,143 @@ def delete_scene(ctx: Context, scene_index: int, user_prompt: str = "") -> str:
         logger.error(f"Error deleting scene: {str(e)}")
         return f"Error deleting scene: {str(e)}"
 
+# ── Clip automation tools ─────────────────────────────────────────────────────
+
+def _automation_target(target_type, device_index, parameter_index, send_index):
+    return {
+        "type": target_type,
+        "device_index": device_index,
+        "parameter_index": parameter_index,
+        "send_index": send_index,
+    }
+
+
+@mcp.tool()
+@rich_telemetry_tool("set_clip_automation")
+@trajectory_tool("set_clip_automation")
+def set_clip_automation(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    points: List[Dict[str, float]],
+    target_type: str = "device",
+    device_index: int = 0,
+    parameter_index: int = 0,
+    send_index: int = 0,
+    resolution: float = 0.0625,
+    user_prompt: str = ""
+) -> str:
+    """
+    Draw a parameter's automation inside a Session clip, replacing any existing
+    envelope for that parameter. The clip loops it with the notes.
+
+    Points are breakpoints {"time": beats from clip start, "value": raw value}
+    or, for volume and sends, {"time": ..., "db": level}. Values between points
+    ramp linearly in steps of `resolution` beats. Example filter sweep over
+    4 bars: [{"time": 0, "value": 0.2}, {"time": 16, "value": 1.0}].
+
+    Parameters:
+    - track_index: The track that owns the clip
+    - clip_index: The clip slot
+    - points: Breakpoints, at least one
+    - target_type: "volume", "panning", "send" or "device"
+    - device_index: Device on the track, for target_type "device"
+    - parameter_index: Parameter of that device (see get_device_parameters)
+    - send_index: Send to automate, for target_type "send" (0 is return A)
+    - resolution: Step length in beats for ramps (default 1/16 beat)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_automation", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "target": _automation_target(target_type, device_index, parameter_index, send_index),
+            "points": points,
+            "resolution": resolution,
+        })
+        return (f"Automated '{result.get('parameter')}' with {result.get('points')} points "
+                f"({result.get('steps')} steps)")
+    except Exception as e:
+        logger.error(f"Error setting clip automation: {str(e)}")
+        return f"Error setting clip automation: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("clear_clip_automation")
+@trajectory_tool("clear_clip_automation")
+def clear_clip_automation(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    target_type: str = "device",
+    device_index: int = 0,
+    parameter_index: int = 0,
+    send_index: int = 0,
+    user_prompt: str = ""
+) -> str:
+    """
+    Remove a parameter's automation from a Session clip.
+
+    Parameters:
+    - track_index: The track that owns the clip
+    - clip_index: The clip slot
+    - target_type: "volume", "panning", "send" or "device"
+    - device_index: Device on the track, for target_type "device"
+    - parameter_index: Parameter of that device (see get_device_parameters)
+    - send_index: Send to automate, for target_type "send" (0 is return A)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("clear_clip_automation", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "target": _automation_target(target_type, device_index, parameter_index, send_index),
+        })
+        return f"Cleared automation of '{result.get('parameter')}'"
+    except Exception as e:
+        logger.error(f"Error clearing clip automation: {str(e)}")
+        return f"Error clearing clip automation: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("get_clip_automation")
+def get_clip_automation(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    target_type: str = "device",
+    device_index: int = 0,
+    parameter_index: int = 0,
+    send_index: int = 0,
+    resolution: float = 0.25,
+    user_prompt: str = ""
+) -> str:
+    """
+    Read a parameter's automation in a Session clip, sampled every `resolution` beats.
+
+    Parameters:
+    - track_index: The track that owns the clip
+    - clip_index: The clip slot
+    - target_type: "volume", "panning", "send" or "device"
+    - device_index: Device on the track, for target_type "device"
+    - parameter_index: Parameter of that device (see get_device_parameters)
+    - send_index: Send to automate, for target_type "send" (0 is return A)
+    - resolution: Sampling interval in beats (default 1/4 beat)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_clip_automation", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "target": _automation_target(target_type, device_index, parameter_index, send_index),
+            "resolution": resolution,
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error reading clip automation: {str(e)}")
+        return f"Error reading clip automation: {str(e)}"
+
 # Main execution
 def main():
     """Run the MCP server"""
