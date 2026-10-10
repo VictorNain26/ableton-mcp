@@ -34,7 +34,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.11.0"
+SCRIPT_VERSION = "1.12.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -73,6 +73,8 @@ SCRIPT_CAPABILITIES = [
     "get_groove_pool",
     "set_clip_groove",
     "set_groove_params",
+    "start_resample",
+    "finish_resample",
 ]
 
 def create_instance(c_instance):
@@ -335,7 +337,9 @@ class AbletonMCP(ControlSurface):
                                  # Clip automation – must run on the main thread
                                  "set_clip_automation", "clear_clip_automation",
                                  # Groove pool – must run on the main thread
-                                 "set_clip_groove", "set_groove_params"]:
+                                 "set_clip_groove", "set_groove_params",
+                                 # Resampling – must run on the main thread
+                                 "start_resample", "finish_resample"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -486,6 +490,14 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "set_groove_params":
                             result = self._set_groove_params(
                                 params.get("groove_index", 0), params.get("amounts", {}))
+                        # ── Resampling commands ────────────────────────────────────
+                        elif command_type == "start_resample":
+                            result = self._start_resample(
+                                params.get("track_index", 0), params.get("clip_index", 0),
+                                params.get("beats", 8.0), params.get("scene_index", -1))
+                        elif command_type == "finish_resample":
+                            result = self._finish_resample(
+                                params.get("track_index", 0), params.get("clip_index", 0))
                         elif command_type == "set_send":
                             result = self._set_send(
                                 params.get("track_index", 0),
@@ -1083,6 +1095,57 @@ class AbletonMCP(ControlSurface):
                 raise Exception("Unknown groove amount '%s'" % attr)
             setattr(groove, attr, float(value))
         return self._serialize_groove(groove_index, groove)
+
+    # ------------------------------------------------------------------
+    # Resampling: record Live's master output into an audio clip
+    # ------------------------------------------------------------------
+
+    MONITORING_OFF = 2
+
+    def _start_resample(self, track_index, clip_index, beats, scene_index=-1):
+        """Record `beats` of the master output into an empty slot of an audio track.
+
+        The Live API cannot render audio, but an audio track whose input is
+        Resampling records exactly what the master plays. If scene_index is
+        given, that row's clips on the other tracks are launched together with
+        the recording.
+        """
+        track = self._resolve_track(track_index)
+        if not track.has_audio_input:
+            raise Exception("Track '%s' is not an audio track" % track.name)
+        if clip_index < 0 or clip_index >= len(track.clip_slots):
+            raise IndexError("Clip index %s out of range" % clip_index)
+        slot = track.clip_slots[clip_index]
+        if slot.has_clip:
+            raise Exception("Clip slot %s on '%s' is not empty" % (clip_index, track.name))
+        routings = list(track.available_input_routing_types)
+        resampling = [r for r in routings if r.display_name == "Resampling"]
+        if not resampling:
+            raise Exception("No Resampling input on '%s'. Inputs: %s"
+                            % (track.name, ", ".join(r.display_name for r in routings)))
+        track.input_routing_type = resampling[0]
+        # Monitoring the master back into itself would feed back.
+        track.current_monitoring_state = self.MONITORING_OFF
+        track.arm = True
+        if scene_index >= 0:
+            self._resolve_scene(scene_index)
+            for other in self._song.tracks:
+                if other is not track and scene_index < len(other.clip_slots):
+                    other_slot = other.clip_slots[scene_index]
+                    if other_slot.has_clip:
+                        other_slot.fire()
+        slot.fire(record_length=float(beats))
+        return {"track": track.name, "clip_index": clip_index, "beats": float(beats),
+                "tempo": self._song.tempo}
+
+    def _finish_resample(self, track_index, clip_index):
+        """Disarm once the recording has landed and report the recorded file."""
+        track = self._resolve_track(track_index)
+        slot = track.clip_slots[clip_index]
+        if not slot.has_clip or slot.clip.is_recording:
+            return {"done": False}
+        track.arm = False
+        return {"done": True, "file_path": slot.clip.file_path, "length": slot.clip.length}
 
     def _set_track_flag(self, track_index, flag, enabled, track_type="track"):
         """Set a track's mute or solo button. The master track has neither."""

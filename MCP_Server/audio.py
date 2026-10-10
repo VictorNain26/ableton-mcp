@@ -90,6 +90,36 @@ def record(seconds: float, device: str = DEFAULT_DEVICE, out_path: str = None) -
     return out_path
 
 
+def local_path(path: str) -> str:
+    """Map a path Live reports to one this process can open.
+
+    Live on Windows reports C:\\... paths; a server running under WSL reaches
+    the same file through /mnt/c.
+    """
+    match = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
+    if match and os.name != "nt":
+        mount = "/mnt/" + match.group(1).lower()
+        if os.path.isdir(mount):
+            return mount + "/" + match.group(2).replace("\\", "/")
+    return path
+
+
+def to_analysis_wav(path: str) -> str:
+    """Convert any audio file to the 16-bit stereo WAV analyze() reads.
+
+    Live records 24- or 32-bit files into the project folder; the copy goes to
+    the temp directory, the only place analyze() reads from."""
+    out_path = os.path.join(tempfile.gettempdir(), f"ableton_mcp_{int(time.time() * 1000)}.wav")
+    proc = subprocess.run(
+        [_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", path,
+         "-ac", "2", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le", out_path],
+        capture_output=True, text=True, timeout=120,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg could not convert {path}: {proc.stderr.strip() or 'no output'}")
+    return out_path
+
+
 def _db(x: float):
     # None rather than -inf for silence: json.dumps writes -inf as -Infinity,
     # which strict JSON parsers reject.
