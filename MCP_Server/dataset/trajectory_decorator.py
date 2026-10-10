@@ -49,6 +49,8 @@ MODIFYING_TOOLS = {
     "delete_scene",
     "set_clip_automation",
     "clear_clip_automation",
+    "set_clip_groove",
+    "set_groove_params",
 }
 
 _PARAM_KEYS = (
