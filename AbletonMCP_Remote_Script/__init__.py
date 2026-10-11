@@ -34,7 +34,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.14.0"
+SCRIPT_VERSION = "1.15.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -78,6 +78,8 @@ SCRIPT_CAPABILITIES = [
     "get_clip_file",
     "get_drum_pads",
     "delete_track",
+    "get_simpler",
+    "set_simpler",
 ]
 
 def create_instance(c_instance):
@@ -312,6 +314,9 @@ class AbletonMCP(ControlSurface):
                 response["result"] = self._get_clip_automation(
                     params.get("track_index", 0), params.get("clip_index", 0),
                     params.get("target", {}), params.get("resolution", 0.25))
+            elif command_type == "get_simpler":
+                response["result"] = self._get_simpler(
+                    params.get("track_index", 0), params.get("device_index", 0))
             elif command_type == "get_drum_pads":
                 response["result"] = self._get_drum_pads(
                     params.get("track_index", 0), params.get("device_index", 0))
@@ -349,7 +354,7 @@ class AbletonMCP(ControlSurface):
                                  "set_clip_groove", "set_groove_params",
                                  # Resampling – must run on the main thread
                                  "start_resample", "finish_resample",
-                                 "delete_track"]:
+                                 "delete_track", "set_simpler"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -510,6 +515,10 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "finish_resample":
                             result = self._finish_resample(
                                 params.get("track_index", 0), params.get("clip_index", 0))
+                        elif command_type == "set_simpler":
+                            result = self._set_simpler(
+                                params.get("track_index", 0), params.get("device_index", 0),
+                                params.get("settings", {}))
                         elif command_type == "delete_track":
                             result = self._delete_track(params.get("track_index", 0))
                         elif command_type == "set_send":
@@ -1162,6 +1171,48 @@ class AbletonMCP(ControlSurface):
             return {"done": False}
         track.arm = False
         return {"done": True, "file_path": slot.clip.file_path, "length": slot.clip.length}
+
+    # ------------------------------------------------------------------
+    # Simpler slicing
+    # ------------------------------------------------------------------
+
+    SIMPLER_DEVICE_SETTINGS = ("playback_mode", "slicing_playback_mode")
+    SIMPLER_SAMPLE_SETTINGS = ("slicing_style", "slicing_beat_division", "slicing_sensitivity")
+
+    def _resolve_simpler(self, track_index, device_index):
+        device = self._resolve_track(track_index).devices[device_index]
+        if not hasattr(device, "playback_mode"):
+            raise Exception("Device '%s' is not a Simpler" % device.name)
+        return device
+
+    def _get_simpler(self, track_index, device_index):
+        device = self._resolve_simpler(track_index, device_index)
+        info = {"name": device.name}
+        for attr in self.SIMPLER_DEVICE_SETTINGS:
+            info[attr] = getattr(device, attr)
+        sample = device.sample
+        if sample is None:
+            info["sample"] = None
+            return info
+        info["sample"] = {"file_path": sample.file_path, "sample_rate": sample.sample_rate,
+                          "length": sample.length}
+        for attr in self.SIMPLER_SAMPLE_SETTINGS:
+            info[attr] = getattr(sample, attr)
+        info["slices"] = list(sample.slices)
+        return info
+
+    def _set_simpler(self, track_index, device_index, settings):
+        """Set Simpler's playback mode and its sample's slicing settings."""
+        device = self._resolve_simpler(track_index, device_index)
+        for attr, value in settings.items():
+            if attr in self.SIMPLER_DEVICE_SETTINGS:
+                setattr(device, attr, int(value))
+            elif attr in self.SIMPLER_SAMPLE_SETTINGS:
+                cast = float if attr == "slicing_sensitivity" else int
+                setattr(device.sample, attr, cast(value))
+            else:
+                raise Exception("Unknown Simpler setting '%s'" % attr)
+        return self._get_simpler(track_index, device_index)
 
     def _get_drum_pads(self, track_index, device_index):
         """MIDI note and name of every Drum Rack pad that holds a sound."""
@@ -2498,6 +2549,13 @@ class AbletonMCP(ControlSurface):
                         }
                         if hasattr(param, "value_string"):
                             entry["value_string"] = str(param.value_string)
+                        else:
+                            # Live 11 has no value_string; str_for_value gives the
+                            # same readout ("-6.0 dB", "4.00 : 1").
+                            try:
+                                entry["value_string"] = str(param.str_for_value(param.value))
+                            except Exception:
+                                pass
                         if hasattr(param, "automation_state"):
                             try:
                                 entry["automation_state"] = int(param.automation_state)
