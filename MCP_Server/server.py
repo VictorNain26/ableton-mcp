@@ -2265,6 +2265,70 @@ def delete_track(ctx: Context, track_index: int, user_prompt: str = "") -> str:
         logger.error(f"Error deleting track: {str(e)}")
         return f"Error deleting track: {str(e)}"
 
+@mcp.tool()
+@telemetry_tool("get_simpler")
+def get_simpler(ctx: Context, track_index: int, device_index: int = 0, user_prompt: str = "") -> str:
+    """
+    Read a Simpler: playback mode, slicing settings, loaded sample and slice
+    positions (in sample frames; divide by sample_rate for seconds).
+
+    Parameters:
+    - track_index: The track holding the Simpler
+    - device_index: The Simpler's position in the device chain (default 0)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        return json.dumps(ableton.send_command("get_simpler", {
+            "track_index": track_index, "device_index": device_index}), indent=2)
+    except Exception as e:
+        logger.error(f"Error reading Simpler: {str(e)}")
+        return f"Error reading Simpler: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("set_simpler")
+@trajectory_tool("set_simpler")
+def set_simpler(
+    ctx: Context,
+    track_index: int,
+    device_index: int = 0,
+    playback_mode: Optional[int] = None,
+    slicing_playback_mode: Optional[int] = None,
+    slicing_style: Optional[int] = None,
+    slicing_beat_division: Optional[int] = None,
+    slicing_sensitivity: Optional[float] = None,
+    user_prompt: str = ""
+) -> str:
+    """
+    Switch a Simpler between Classic, One-Shot and Slicing, and set how its
+    sample is sliced. In Slicing mode MIDI notes from C1 (36) upward trigger
+    the slices in order.
+
+    Parameters:
+    - track_index: The track holding the Simpler
+    - device_index: The Simpler's position in the device chain (default 0)
+    - playback_mode: 0 Classic, 1 One-Shot, 2 Slicing
+    - slicing_playback_mode: 0 Mono, 1 Poly, 2 Thru
+    - slicing_style: 0 Transient, 1 Beat, 2 Region, 3 Manual
+    - slicing_beat_division: for Beat style; 0 1/16, 1 1/16T, 2 1/8, 3 1/8T, 4 1/4,
+      5 1/4T, 6 1/2, 7 1/2T, 8 1 bar, 9 2 bars, 10 4 bars
+    - slicing_sensitivity: for Transient style, 0.0 to 1.0
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    settings = {name: value for name, value in (
+        ("playback_mode", playback_mode), ("slicing_playback_mode", slicing_playback_mode),
+        ("slicing_style", slicing_style), ("slicing_beat_division", slicing_beat_division),
+        ("slicing_sensitivity", slicing_sensitivity)) if value is not None}
+    if not settings:
+        return "Error: provide at least one setting"
+    try:
+        ableton = get_ableton_connection()
+        return json.dumps(ableton.send_command("set_simpler", {
+            "track_index": track_index, "device_index": device_index, "settings": settings}), indent=2)
+    except Exception as e:
+        logger.error(f"Error setting Simpler: {str(e)}")
+        return f"Error setting Simpler: {str(e)}"
+
 
 # Main execution
 def main():
