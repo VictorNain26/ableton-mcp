@@ -19,7 +19,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 import wave
 
 DEFAULT_DEVICE = "BlackHole 2ch"
@@ -36,6 +35,14 @@ def _ffmpeg() -> str:
     if not path:
         raise RuntimeError("ffmpeg not found. Install it with: brew install ffmpeg")
     return path
+
+
+def _private_wav_path() -> str:
+    """A new WAV path inside a fresh 0700 directory under the temp directory.
+
+    ffmpeg -y follows whatever sits at its output path; a guessable name in a
+    shared /tmp would let another local user plant a symlink there."""
+    return os.path.join(tempfile.mkdtemp(prefix="ableton_mcp_"), "capture.wav")
 
 
 def _input_devices() -> dict:
@@ -72,7 +79,7 @@ def record(seconds: float, device: str = DEFAULT_DEVICE, out_path: str = None) -
             "through a Multi-Output Device."
         )
     if out_path is None:
-        out_path = os.path.join(tempfile.gettempdir(), f"ableton_mcp_{int(time.time() * 1000)}.wav")
+        out_path = _private_wav_path()
 
     proc = subprocess.run(
         [_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
@@ -109,7 +116,7 @@ def to_analysis_wav(path: str) -> str:
 
     Live records 24- or 32-bit files into the project folder; the copy goes to
     the temp directory, the only place analyze() reads from."""
-    out_path = os.path.join(tempfile.gettempdir(), f"ableton_mcp_{int(time.time() * 1000)}.wav")
+    out_path = _private_wav_path()
     proc = subprocess.run(
         [_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", path,
          "-ac", "2", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le", out_path],
