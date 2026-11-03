@@ -1,0 +1,19 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv run --frozen --with numpy --with pytest python -m pytest -q
+        env:
+          ABLETON_MCP_DISABLE_TELEMETRY: "true"
+          ABLETON_MCP_DISABLE_DATASET: "true"
