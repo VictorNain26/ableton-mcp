@@ -9,6 +9,8 @@ Run from the repo root:
 
 import json
 import math
+import os
+import stat
 import struct
 import subprocess
 import wave
@@ -150,6 +152,27 @@ def test_record_uses_exact_device_name(fake_ffmpeg, tmp_path):
     assert cmd[cmd.index("-i") + 1] == ":1"
     assert cmd[cmd.index("-t") + 1] == "2.000"
     assert out == str(tmp_path / "x.wav")
+
+
+def assert_private_new_file(path, tempdir):
+    """The file sits in a fresh directory only its owner can enter, so no other
+    local user can plant a symlink at a guessable path for ffmpeg -y to follow."""
+    folder = os.path.dirname(path)
+    assert os.path.dirname(folder) == str(tempdir)
+    assert stat.S_IMODE(os.stat(folder).st_mode) == 0o700
+    assert not os.path.lexists(path)
+
+
+def test_record_writes_to_a_private_directory(fake_ffmpeg, tmp_path, monkeypatch):
+    monkeypatch.setattr(audio.tempfile, "gettempdir", lambda: str(tmp_path))
+    first, second = audio.record(2), audio.record(2)
+    assert_private_new_file(first, tmp_path)
+    assert os.path.dirname(first) != os.path.dirname(second)
+
+
+def test_analysis_copy_writes_to_a_private_directory(fake_ffmpeg, tmp_path, monkeypatch):
+    monkeypatch.setattr(audio.tempfile, "gettempdir", lambda: str(tmp_path))
+    assert_private_new_file(audio.to_analysis_wav("/project/Samples/take.wav"), tmp_path)
 
 
 def test_record_unknown_device(fake_ffmpeg):
