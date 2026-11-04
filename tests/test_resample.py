@@ -128,7 +128,7 @@ def test_to_analysis_wav_converts_24_bit(tmp_path):
             assert wav.getnchannels() == 2
         assert audio.analyze(out)["silent"] is False
     finally:
-        os.remove(out)
+        shutil.rmtree(os.path.dirname(out))  # the private capture directory
 
 
 def test_get_clip_file_reports_path(inst):

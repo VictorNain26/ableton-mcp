@@ -126,8 +126,10 @@ DEVICE_LIST = """\
 
 
 @pytest.fixture
-def fake_ffmpeg(monkeypatch):
+def fake_ffmpeg(monkeypatch, tmp_path):
     calls = []
+    # Captures land in a fresh temp directory; keep those out of the real /tmp.
+    monkeypatch.setattr(audio.tempfile, "gettempdir", lambda: str(tmp_path))
 
     def run(cmd, **kwargs):
         calls.append(cmd)
